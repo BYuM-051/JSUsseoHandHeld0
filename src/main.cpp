@@ -17,13 +17,14 @@ void loop();
 #define BH1 4
 #define BS0 5
 
+//아씨 뭐하려고 했었지 이거
 #if (CurrentBoard) == BR0
-    #define 
 #elif (CurrentBoard) == BR1
 #elif (CurrentBoard) == BR2
 #elif (CurrentBoard) == BH0
 #elif (CurrentBoard) == BH1
 #elif (CurrentBoard) == BS0
+#else
 #endif
 
 constexpr uint8_t MAC_ADDR [MAX_BOARDS][6] = 
@@ -49,10 +50,15 @@ constexpr uint16_t UWB_ID [MAX_BOARDS] =
 // UART Communication ======================================================
 #include "driver/uart.h"
 #define MAX_SERIAL_LENGTH 64
+#define UART_MESSAGE_QUEUE_DEPTH 10
+#define UART_RX_BUFFER_SIZE (MAX_SERIAL_LENGTH * UART_MESSAGE_QUEUE_DEPTH)
+#define UART_TX_BUFFER_SIZE (MAX_SERIAL_LENGTH * 2)
+#define UART_EVENT_QUEUE_SIZE 20
 #define HHUWB UART_NUM_1
 #define UART1_RX_PIN GPIO_NUM_16
 #define UART1_TX_PIN GPIO_NUM_17
 #define UART_LISTENER_CORE 0
+#define UART_BAUD_RATE 115200
 #define UART_BLOCK_TICKS pdMS_TO_TICKS(portMAX_DELAY)
 
 QueueHandle_t hhuwbEventQueue;
@@ -98,29 +104,44 @@ void espNowListnener(void *param);
 void onESPNowDataReceived(char *cmdText);
 void espNowPrintf(const uint8_t *mac_addr, const char *format, ...);
 // UWB Communication =======================================================
+#include <SPI.h>
 #include "dw3000.h"
 
+#define UWB_LISTENER_CORE 0
 #define DWT_SFD_IEEE8 0
 #define UWB_TIMEOUT
+#define TX_ANT_DLY 16385
+#define RX_ANT_DLY 16385
 
-dwt_config_t uwbConfig = 
+// Makersfab ESP32 DW3000 board config
+const uint8_t PIN_RST = 27; // reset pin
+const uint8_t PIN_IRQ = 34; // irq pin
+const uint8_t PIN_SS = 4; // spi select pin
+
+static dwt_config_t uwbConfig = 
 {
-    .chan = 5,
-    .txPreambLength = DWT_PLEN_128,
-    .rxPAC = DWT_PAC8,
-    .txCode = 9,
-    .rxCode = 9,
-    .sfdType = DWT_SFD_IEEE8,
-    .dataRate = DWT_BR_6M8,
-    .phrMode = DWT_PHRMODE_STD,
-    .sfdTO = 64u,
-    .stsMode = DWT_STS_MODE_OFF,
-    .stsLength = DWT_STS_LEN_128,
-    .pdoaMode = DWT_PDOA_M0
+    5,               /* Channel number. */
+    DWT_PLEN_128,    /* Preamble length. Used in TX only. */
+    DWT_PAC8,        /* Preamble acquisition chunk size. Used in RX only. */
+    9,               /* TX preamble code. Used in TX only. */
+    9,               /* RX preamble code. Used in RX only. */
+    1,               /* 0 to use standard 8 symbol SFD, 1 to use non-standard 8 symbol, 2 for non-standard 16 symbol SFD and 3 for 4z 8 symbol SDF type */
+    DWT_BR_6M8,      /* Data rate. */
+    DWT_PHRMODE_STD, /* PHY header mode. */
+    DWT_PHRRATE_STD, /* PHY header rate. */
+    (129 + 8 - 8),   /* SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only. */
+    DWT_STS_MODE_OFF, /* STS disabled */
+    DWT_STS_LEN_64,/* STS length see allowed values in Enum dwt_sts_lengths_e */
+    DWT_PDOA_M0      /* PDOA mode off */
 };
 
+extern dwt_txconfig_t txconfig_options;
+
+TaskHandle_t uwbTask;
+
 void uwbInit(void);
-void dwtDataRecvCallback(const dwt_cb_data_t *data);
+void _ISR_UWB(void);
+// void dwtDataRecvCallback(const dwt_cb_data_t *data);
 void uwbListener(void *param);
 void onUWBDataReceived(char *cmdText);
 void uwbPrintf(uint16_t uwbId, const char *format, ...);
@@ -162,7 +183,7 @@ void uart_init(void)
 {
     uart_config_t uartConfig = 
     {
-        .baud_rate = 115200,
+        .baud_rate = UART_BAUD_RATE,
         .data_bits = UART_DATA_8_BITS,
         .parity    = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
@@ -170,7 +191,7 @@ void uart_init(void)
     };
     uart_param_config(HHUWB, &uartConfig);
     uart_set_pin(HHUWB, UART1_TX_PIN, UART1_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-    uart_driver_install(HHUWB, 1024 * 2, 1024 * 2, 20, &hhuwbEventQueue, 0);
+    uart_driver_install(HHUWB, UART_RX_BUFFER_SIZE, UART_TX_BUFFER_SIZE, UART_EVENT_QUEUE_SIZE, &hhuwbEventQueue, 0);
     
     delay(500); // delay to ensure Serial is ready before sending data
 
@@ -197,15 +218,15 @@ void uartListener(void *param)
         {
             #ifdef __DEBUG__
                 pingCount = 0;
-                Serial.println("UART From BH0 Event Received");
+                Serial.println("UART RECEIVED");
                 isConnected = true;
             #endif
             switch(event.type) 
             {
                 case UART_DATA:
-                    int len;
-                    uart_get_buffered_data_len(UART_NUM_1, (size_t*)&len);
-                    len = uart_read_bytes(UART_NUM_1, data, len, 100 / portTICK_PERIOD_MS);
+                {
+                    size_t readLen = min(event.size, sizeof(data) - 1);
+                    int len = uart_read_bytes(UART_NUM_1, data, readLen, pdMS_TO_TICKS(100));
                     
                     if(len > 0) 
                     {
@@ -213,6 +234,7 @@ void uartListener(void *param)
                         onUARTDataReceived((char *)data);
                     }
                     break;
+                }
                 
                 case UART_FIFO_OVF:
                     uart_flush_input(UART_NUM_1);
@@ -419,17 +441,130 @@ void espNowPrintf(const uint8_t *mac_addr, const char *format, ...)
 // UWB Communication ===========================================================
 void uwbInit(void)
 {
+    #ifdef __DEBUG__
+        Serial.println("UWB Init.");
+    #endif
 
+    
+
+    //REFACTOR : all these code below with lower class driver if it needed
+    spiBegin(PIN_IRQ, PIN_RST);
+    spiSelect(PIN_SS);
+
+    delay(2); // Time needed for DW3000 to start up (transition from INIT_RC to IDLE_RC, or could wait for SPIRDY event)
+
+    while (!dwt_checkidlerc()) // Need to make sure DW IC is in IDLE_RC before proceeding 
+    {
+        UART_puts("IDLE FAILED\r\n");
+        while (1) ;
+    }
+
+    if (dwt_initialise(DWT_DW_INIT) == DWT_ERROR)
+    {
+    UART_puts("INIT FAILED\r\n");
+    while (1) ;
+    }
+
+    // Enabling LEDs here for debug so that for each TX the D1 LED will flash on DW3000 red eval-shield boards.
+    dwt_setleds(DWT_LEDS_ENABLE | DWT_LEDS_INIT_BLINK);
+
+    /* Configure DW IC. See NOTE 6 below. */
+    if(dwt_configure(&uwbConfig)) // if the dwt_configure returns DWT_ERROR either the PLL or RX calibration has failed the host should reset the device
+    {
+    UART_puts("CONFIG FAILED\r\n");
+    while (1) ;
+    }
+    /* Apply default antenna delay value. See NOTE 2 below. */
+    dwt_setrxantennadelay(RX_ANT_DLY);
+    dwt_settxantennadelay(TX_ANT_DLY);
+
+    /* Next can enable TX/RX states output on GPIOs 5 and 6 to help debug, and also TX/RX LEDs
+    * Note, in real low power applications the LEDs should not be used. */
+    dwt_setlnapamode(DWT_LNA_ENABLE | DWT_PA_ENABLE); 
+
+    pinMode(PIN_IRQ, INPUT);
+    attachInterrupt(PIN_IRQ, _ISR_UWB, RISING);
+    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_GOOD | SYS_STATUS_ALL_RX_ERR | SYS_STATUS_ALL_RX_TO);
+    dwt_setinterrupt(
+        SYS_ENABLE_LO_RXFCG_ENABLE_BIT_MASK |
+        SYS_ENABLE_LO_RXFCE_ENABLE_BIT_MASK |
+        SYS_ENABLE_LO_RXFSL_ENABLE_BIT_MASK |
+        SYS_ENABLE_LO_RXSTO_ENABLE_BIT_MASK |
+        SYS_ENABLE_LO_RXFTO_ENABLE_BIT_MASK,
+        0,
+        DWT_ENABLE_INT
+    );
+    dwt_rxenable(DWT_START_RX_IMMEDIATE);
+
+    delay(500);
+
+
+    // dwt_setcallbacks(NULL, dwtDataRecvCallback, NULL, NULL, NULL, NULL);
+
+    xTaskCreatePinnedToCore
+    (
+        uwbListener,
+        "uwbListener",
+        4096,
+        NULL,
+        0,
+        &uwbTask,
+        UWB_LISTENER_CORE
+    );
 }
 
-void dwtDataRecvCallback(const dwt_cb_data_t *data)
+void _ISR_UWB(void)
 {
-
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR(uwbTask, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
+
+// void dwtDataRecvCallback(const dwt_cb_data_t *data)
+// {
+//     // #ifdef __DEBUG__
+//     //     Serial.println("Callback Call!");
+//     // #endif
+//     const dwt_cb_data_t buffer = 
+//     {
+//         data->datalength,
+//         data->rx_flags,
+//         data->status,
+//         data->status_hi
+//     };
+//     // xQueueSendFromISR(uwbEventQueue, (void *)&buffer, NULL);
+// }
 
 void uwbListener(void *param)
 {
+    // dwt_cb_data_t data;
+    // while(true)
+    // {
+    //     if(xQueueReceive(uwbEventQueue, &data, portMAX_DELAY))
+    //     {
+    //         #ifdef __DEBUG__
+    //             Serial.printf("UWB RX\n");
+    //         #endif
+    //         dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_GOOD | SYS_STATUS_ALL_RX_ERR | SYS_STATUS_ALL_RX_TO);
+    //         dwt_rxenable(DWT_START_RX_IMMEDIATE);
 
+    //     }
+    // }
+    #ifdef __DEBUG__
+        Serial.println("UWBListener Initialized");
+    #endif
+
+    while(true)
+    {
+        if(ulTaskNotifyTake(pdTRUE, portMAX_DELAY) > 0)
+        {
+            #ifdef __DEBUG__
+                Serial.println("UWB Interrupt!");
+            #endif
+            dwt_isr();
+            dwt_rxenable(DWT_START_RX_IMMEDIATE);
+        }
+    }
 }
 
 void onUWBDataReceived(char *cmdText)
