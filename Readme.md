@@ -42,3 +42,64 @@ Ports info
 ESP32		RX		TX
 BH0		16		17
 BH1			
+
+```mermaid
+flowchart LR
+    %% =========================
+    %% AstroShield DFD (Data-Oriented)
+    %% =========================
+
+    U[Human User]
+
+    subgraph H[HandHeld]
+        BH1[BH1\nESP32-S3\nHuman UI]
+        BH0[BH0\nUWB / Comms Controller]
+    end
+
+    subgraph R[RoboticsParts]
+        R0[R0\nActuating Robotics Module]
+        BR0[BR0\nRobot Main Comms Node]
+        BR1[BR1\nUWB Anchor Node]
+        BR2[BR2\nUWB Anchor Node]
+    end
+
+    subgraph S[Shelter]
+        BS0[BSn\nShelter UWB Node]
+    end
+
+    %% =========================
+    %% Human Interaction
+    %% =========================
+    U -->|mission command / deploy request / confirm input| BH1
+    BH1 -->|UI feedback / threat level / system status| U
+
+    %% =========================
+    %% Handheld Internal
+    %% =========================
+    BH1 <-->|UI data / control command / system state| BH0
+
+    %% =========================
+    %% ESP-NOW Communication
+    %% =========================
+    BH0 <-->|mission packet / robot command / sync data| BR0
+
+    %% =========================
+    %% UWB Ranging / Positioning
+    %% =========================
+    BH0 <-->|distance / time-of-flight data| BR0
+    BH0 <-->|distance / anchor reference| BR1
+    BH0 <-->|distance / anchor reference| BR2
+    BH0 <-->|distance / shelter location| BS0
+
+    %% =========================
+    %% Robot Control
+    %% =========================
+    BR0 -->|navigation command / actuator trigger| R0
+    R0 -->|execution status / movement state / error| BR0
+
+    %% =========================
+    %% Internal Robot Network
+    %% =========================
+    BR0 -->|anchor sync / localization assist| BR1
+    BR0 -->|anchor sync / localization assist| BR2
+```
