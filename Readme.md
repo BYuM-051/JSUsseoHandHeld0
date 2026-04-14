@@ -81,25 +81,27 @@ flowchart LR
     %% =========================
     %% ESP-NOW Communication
     %% =========================
-    BH0 <-->|mission packet / robot command / sync data| BR0
+    BH0 <-->|Robot Command via ESP-NOW over WiFi| BR0
+    BH0 <-->|Distance Between User and Robot via ESP-NOW over WiFi| BR0
+    BH0 <-->|Distance Between User and Shelter via ESP-NOW oevr WiFI| BS0
 
     %% =========================
     %% UWB Ranging / Positioning
     %% =========================
-    BH0 <-->|distance / time-of-flight data| BR0
-    BH0 <-->|distance / anchor reference| BR1
-    BH0 <-->|distance / anchor reference| BR2
-    BH0 <-->|distance / shelter location| BS0
+    BH0 <-->|distance / ToF of UWB| BR0
+    BH0 <-->|distance / ToF of UWB| BR1
+    BH0 <-->|distance / ToF of UWB| BR2
+    BH0 <-->|distance / ToF of UWB | BS0
 
     %% =========================
     %% Robot Control
     %% =========================
-    BR0 -->|navigation command / actuator trigger| R0
-    R0 -->|execution status / movement state / error| BR0
+    BR0 -->|PID Motor Control via UART over TTL| R0
+    R0 -->|response via UART over RS485| BR0
 
     %% =========================
     %% Internal Robot Network
     %% =========================
-    BR0 -->|anchor sync / localization assist| BR1
-    BR0 -->|anchor sync / localization assist| BR2
+    BR1 -->|distance between anchor BH0 to calculate azimuth via UART over TTL| BR0
+    BR2 -->|distance between anchor BH0 to calculate azimuth via UART over TTL| BR0
 ```
