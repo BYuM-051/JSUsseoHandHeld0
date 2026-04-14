@@ -52,19 +52,19 @@ flowchart LR
     U[Human User]
 
     subgraph H[HandHeld]
-        BH1[BH1\nESP32-S3\nHuman UI]
-        BH0[BH0\nUWB / Comms Controller]
+        BH1[BH1\nSunton-ESP32-S3\nHuman UI]
+        BH0[BH0\nUWB]
     end
 
     subgraph R[RoboticsParts]
         R0[R0\nActuating Robotics Module]
-        BR0[BR0\nRobot Main Comms Node]
-        BR1[BR1\nUWB Anchor Node]
-        BR2[BR2\nUWB Anchor Node]
+        BR0[BR0\nRobot Control Assist Board \nUWB]
+        BR1[BR1\nUWB]
+        BR2[BR2\nUWB]
     end
 
     subgraph S[Shelter]
-        BS0[BSn\nShelter UWB Node]
+        BS0[BSn\nShelter\nUWB]
     end
 
     %% =========================
